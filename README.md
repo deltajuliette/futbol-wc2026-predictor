@@ -20,14 +20,23 @@ at the parser level, pending an API key. Docs:
 In a backtest on the bundled synthetic data, calibrated Dixon-Coles beats the
 Elo-only and uniform baselines on log loss, Brier, and RPS.
 
+**Recent updates.** Team-identity resolution is now alias-aware (`team_aliases`), with
+a merge step that collapses sources' duplicate spellings onto one canonical, history-
+bearing team — fixing sides that were otherwise scored as league-average. A
+cross-confederation relative-strength correction is implemented, tested, and gated
+behind `--confederation`; it did **not** beat the calibrated baseline out-of-fold, so
+production runs with it off (see [methodology §8](docs/methodology.md)).
+
 ```bash
 # After install (see Quickstart), reproduce the whole pipeline:
 python -m scripts.etl.init_db
 python -m scripts.etl.make_sample_data --seed 7
 python -m scripts.etl.load_intl_results --path data/raw/intl_results/results.csv
 python -m scripts.etl.load_intl_results --path data/raw/intl_results/upcoming_wc.csv
+python -m scripts.etl.merge_duplicate_teams            # collapse split team identities
+python -m scripts.etl.populate_confederations          # fill teams.confederation
 python -m scripts.features.build_features
-python -m scripts.modeling.train_dixon_coles --half-life 540
+python -m scripts.modeling.train_dixon_coles --half-life 540   # add --confederation for the gated cross-pool experiment
 python -m scripts.modeling.predict --competition world_cup_2026
 python -m scripts.evaluation.backtest --folds 4
 streamlit run app/dashboard/app.py

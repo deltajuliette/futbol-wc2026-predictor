@@ -22,7 +22,12 @@ def _now_iso() -> str:
 
 def upsert_team(engine: Engine, display_name: str, confederation: str | None = None,
                 fifa_code: str | None = None) -> int:
-    """Insert a team if absent (keyed by normalized slug); return its team_id."""
+    """Insert a team if absent (keyed by normalized slug); return its team_id.
+
+    Resolution order: exact ``team_key`` match, then ``team_aliases`` (so known name
+    variants like "Czechia"/"Czech Republic" collapse onto one canonical team), then
+    create. Aliases are stored as slugs (see :mod:`utils.naming`) for robust matching.
+    """
     key = team_key(display_name)
     with engine.begin() as conn:
         row = conn.execute(
@@ -30,6 +35,11 @@ def upsert_team(engine: Engine, display_name: str, confederation: str | None = N
         ).fetchone()
         if row:
             return int(row[0])
+        alias = conn.execute(
+            text("SELECT team_id FROM team_aliases WHERE alias = :k"), {"k": key}
+        ).fetchone()
+        if alias:
+            return int(alias[0])
         res = conn.execute(
             text(
                 "INSERT INTO teams (team_key, display_name, confederation, fifa_code) "
@@ -100,16 +110,18 @@ def bulk_upsert_matches(engine: Engine, recs: list[FixtureRecord],
     """
     if not recs:
         return 0
-    # 1) Resolve every team in a single pass.
+    # 1) Resolve every team in a single pass (team_key, then alias, then create).
     names = {n for r in recs for n in (r.home_team, r.away_team)}
     with engine.begin() as conn:
         existing = {row[0]: row[1] for row in
                     conn.execute(text("SELECT team_key, team_id FROM teams")).fetchall()}
+        aliases = {row[0]: row[1] for row in
+                   conn.execute(text("SELECT alias, team_id FROM team_aliases")).fetchall()}
         to_create = []
         seen = set()
         for name in names:
             key = team_key(name)
-            if key not in existing and key not in seen:
+            if key not in existing and key not in aliases and key not in seen:
                 seen.add(key)
                 to_create.append({"k": key, "n": name})
         if to_create:
@@ -120,6 +132,9 @@ def bulk_upsert_matches(engine: Engine, recs: list[FixtureRecord],
         # Rebuild cache including the new rows (executemany gives no per-row ids).
         cache = {row[0]: row[1] for row in
                  conn.execute(text("SELECT team_key, team_id FROM teams")).fetchall()}
+        # Aliases resolve to their canonical team_id (slugs absent from teams).
+        for alias_key, tid in aliases.items():
+            cache.setdefault(alias_key, tid)
 
     # 2) Upsert all matches in one transaction.
     now = _now_iso()
@@ -160,7 +175,8 @@ def load_matches_df(engine: Engine, competition: str | None = None,
                     finished_only: bool = False) -> pd.DataFrame:
     """Return matches joined to team display names as a DataFrame."""
     q = (
-        "SELECT m.*, ht.display_name AS home_name, at.display_name AS away_name "
+        "SELECT m.*, ht.display_name AS home_name, at.display_name AS away_name, "
+        "ht.confederation AS home_conf, at.confederation AS away_conf "
         "FROM matches m "
         "JOIN teams ht ON ht.team_id = m.home_team_id "
         "JOIN teams at ON at.team_id = m.away_team_id"
