@@ -188,13 +188,15 @@ splits with out-of-fold calibration.
 
 | Model | Log loss | Interpretation |
 |---|---:|---|
-| **Calibrated Dixon-Coles** (`dc_cal`) | **0.851** | the production forecast |
-| Elo-only benchmark | 1.018 | simple baseline |
+| **Calibrated Dixon-Coles** (`dc_cal`) | **0.859** | the production forecast |
+| Calibrated DC + confederation (`dc_cal_conf`) | 0.859 | evaluated, **not shipped** (see §8) |
+| Elo-only benchmark | 1.016 | simple baseline |
 | Uniform (1/3 each) | 1.099 | blind guessing |
 
-Lower is better. The calibrated goal model beats both baselines, and calibration both
-improves the scores and reduces overconfidence (sharpness). Sample real forecasts pass
-the smell test (e.g., Spain ~0.93 vs Cape Verde; Switzerland favored over Qatar).
+Lower is better (3,556 held-out matches, 4 rolling-origin folds). The calibrated goal
+model beats both baselines, and calibration both improves the scores and reduces
+overconfidence (sharpness). Sample real forecasts pass the smell test (e.g., Spain
+~0.87 vs Cape Verde; Switzerland favored over Qatar).
 
 ---
 
@@ -246,6 +248,23 @@ definitions. Stored in `predictions.reasoning_json`, versioned by `model_run_id`
 - Team strength is inferred from results only; **no lineup, injury, or xG inputs are
   currently in the model** — so the reasoning layer never cites them (that would be
   fiction). xG enrichment is scaffolded behind an adapter for later.
+- **Confederation correction — evaluated, not shipped.** A cross-confederation
+  relative-strength term (correcting the weak rating linkage between pools that rarely
+  meet) is fully implemented, tested, and gated behind `--confederation`. Under honest
+  regularization it does **not** beat the calibrated baseline (Δlog-loss ≈ +7e-5,
+  i.e. a hair worse). The large coefficients seen at weak regularization were
+  overfitting the bound; the genuine signal is real-but-negligible. Per "avoid
+  complexity unless it clearly beats calibrated baselines," production runs with it
+  **off**. The capability remains for re-evaluation as tournament data accrues. Teams'
+  confederations are populated (`scripts/etl/populate_confederations.py`) from a
+  curated reference map; CONIFA/unaffiliated entities are intentionally left NULL.
+- **Team-identity dedup.** The two ingest sources spelled several teams differently
+  (e.g. "Czechia"/"Czech Republic"), and resolution keyed only on the name slug, so
+  duplicates were created — leaving four World Cup sides (Cape Verde, DR Congo, Czech
+  Republic, Bosnia) scored as rating-less averages. Team resolution is now alias-aware
+  (`team_aliases`), and `scripts/etl/merge_duplicate_teams.py` merged the splits onto
+  the canonical, history-bearing team. This materially corrected those forecasts
+  (e.g. Spain v Cape Verde 98%→87%).
 - Neutral-venue handling is applied throughout, but **knockout-specific dynamics**
   (extra time, penalties) are not yet modeled as a separate target.
 - The market benchmark depends on odds being ingested; where odds are absent, only the

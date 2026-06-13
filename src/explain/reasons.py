@@ -66,6 +66,7 @@ OVER25_TIGHT = 0.45        # leans tight
 CAL_SHIFT_NOTABLE = 0.03   # calibration moved the favored prob by >= 3 points
 EDGE_NOTABLE = 0.05        # model vs benchmark disagreement worth flagging
 THIN_SAMPLE_MATCHES = 10   # fewer recent matches than this widens uncertainty
+CONF_EDGE_NOTABLE = 0.04   # cross-confederation log-goal-diff worth flagging
 
 
 @dataclass
@@ -139,13 +140,19 @@ def explain(
     elo_probs: tuple[float, float, float] | None,
     mp: MatchProbabilities,
     recent_counts: Mapping[str, int],
+    home_conf: str | None = None,
+    away_conf: str | None = None,
 ) -> ReasoningBundle:
     """Build a :class:`ReasoningBundle` from stored model quantities.
 
     ``elo_diff`` is the pure home-minus-away Elo rating difference (no venue term).
     ``p_cal`` / ``p_raw`` are calibrated / raw (home, draw, away) probabilities.
     ``recent_counts`` maps ``team_key`` -> number of recent matches behind each
-    team's strength estimate (drives the thin-sample caveat).
+    team's strength estimate (drives the thin-sample caveat). ``home_conf`` /
+    ``away_conf`` are the sides' confederations, used only for the cross-pool driver.
+
+    Exact decomposition invariant: ``goals`` magnitude + ``continent`` magnitude
+    equals ``log(lambda_home) - log(lambda_away)`` to machine precision.
     """
     h, a = team_key(home), team_key(away)
     ph, pd_, pa = p_cal
@@ -181,7 +188,9 @@ def explain(
     def_h, def_a = model.defense.get(h, 0.0), model.defense.get(a, 0.0)
     atk_edge = atk_h - atk_a
     def_edge = def_h - def_a
-    log_ratio = atk_edge + def_edge + hadv   # == log(lam_h) - log(lam_a) by construction
+    conf_edge = model.conf_edge(home_conf, away_conf)   # cross-pool piece (0 if off/intra)
+    # Within-pool log-goal-ratio; together with conf_edge == log(lam_h) - log(lam_a).
+    log_ratio = atk_edge + def_edge + hadv
     atk_pctl_h = _percentile(atk_h, list(model.attack.values()))
     def_pctl_h = _percentile(def_h, list(model.defense.values()))
     atk_pctl_a = _percentile(atk_a, list(model.attack.values()))
@@ -211,6 +220,19 @@ def explain(
         direction="home" if log_ratio > 0 else ("away" if log_ratio < 0 else "neutral"),
         text=goals_text,
     ))
+
+    # --- cross-confederation correction -----------------------------------------
+    if abs(conf_edge) >= CONF_EDGE_NOTABLE and home_conf and away_conf:
+        favc = home_conf if conf_edge > 0 else away_conf
+        othc = away_conf if conf_edge > 0 else home_conf
+        fav_name = home if conf_edge > 0 else away
+        conf_text = (f"Cross-confederation: {favc} sides have historically out-performed "
+                     f"{othc} beyond their ratings, tilting toward {fav_name}.")
+        drivers.append(Driver(
+            kind="continent", label=f"{home_conf} v {away_conf}",
+            magnitude=float(conf_edge), salience=min(abs(conf_edge) / 0.30, 1.0) * 0.7,
+            direction="home" if conf_edge > 0 else "away", text=conf_text,
+        ))
 
     # --- match shape -------------------------------------------------------------
     top_score = mp.top_scorelines[0][0] if mp.top_scorelines else "n/a"

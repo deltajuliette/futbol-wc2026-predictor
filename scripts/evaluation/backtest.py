@@ -39,11 +39,15 @@ def _outcomes(df) -> np.ndarray:
 
 
 def _dc_probs(model, df) -> np.ndarray:
-    return np.array([
-        probabilities(*model.predict_lambdas(r.home_name, r.away_name, bool(r.neutral)),
-                      rho=model.rho).as_1x2()
-        for r in df.itertuples(index=False)
-    ])
+    has_conf = {"home_conf", "away_conf"} <= set(df.columns)
+    out = []
+    for r in df.itertuples(index=False):
+        hc = getattr(r, "home_conf", None) if has_conf else None
+        ac = getattr(r, "away_conf", None) if has_conf else None
+        lam_h, lam_a = model.predict_lambdas(r.home_name, r.away_name, bool(r.neutral),
+                                             home_conf=hc, away_conf=ac)
+        out.append(probabilities(lam_h, lam_a, rho=model.rho).as_1x2())
+    return np.array(out)
 
 
 def backtest(folds: int = 4, test_frac: float = 0.3, half_life: float = 540.0) -> None:
@@ -56,7 +60,8 @@ def backtest(folds: int = 4, test_frac: float = 0.3, half_life: float = 540.0) -
     test_start = int(n * (1 - test_frac))
     fold_edges = np.linspace(test_start, n, folds + 1).astype(int)
 
-    acc: dict[str, list[np.ndarray]] = {k: [] for k in ("dc_raw", "dc_cal", "elo", "uniform")}
+    acc: dict[str, list[np.ndarray]] = {
+        k: [] for k in ("dc_raw", "dc_cal", "dc_cal_conf", "elo", "uniform")}
     acc_out: list[np.ndarray] = []
 
     for i in range(folds):
@@ -74,6 +79,12 @@ def backtest(folds: int = 4, test_frac: float = 0.3, half_life: float = 540.0) -
         dc_raw = _dc_probs(dc, test)
         acc["dc_raw"].append(dc_raw)
         acc["dc_cal"].append(calib.transform(dc_raw))
+
+        # Confederation variant: same pipeline, with the cross-pool correction on.
+        dc_c = fit_dixon_coles(train, half_life_days=half_life, use_confederation=True)
+        calib_c = ProbabilityCalibrator().fit(_dc_probs(dc_c, train), _outcomes(train))
+        acc["dc_cal_conf"].append(calib_c.transform(_dc_probs(dc_c, test)))
+
         acc["elo"].append(np.array([
             elo.predict_1x2(r.home_name, r.away_name, bool(r.neutral))
             for r in test.itertuples(index=False)
@@ -107,10 +118,12 @@ def backtest(folds: int = 4, test_frac: float = 0.3, half_life: float = 540.0) -
                  "notes": f"rolling-origin folds={folds} half_life={half_life} run={run_stamp}"},
             )
 
-    best = min(("dc_cal", "dc_raw"), key=lambda k: results[k].log_loss)
+    best = min(("dc_cal", "dc_cal_conf", "dc_raw"), key=lambda k: results[k].log_loss)
     verdict = "beats" if results[best].log_loss < results["elo"].log_loss else "does NOT beat"
+    conf_delta = results["dc_cal_conf"].log_loss - results["dc_cal"].log_loss
     log.info("backtest_done", best_model=best, verdict=f"{best} {verdict} elo on log loss",
-             n=len(outcomes))
+             confederation_logloss_delta=round(conf_delta, 5),
+             confederation_helps=bool(conf_delta < 0), n=len(outcomes))
 
 
 def main() -> None:

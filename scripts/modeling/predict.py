@@ -81,8 +81,10 @@ def predict(competition: str) -> None:
 
     # Fit calibration on finished matches' DC raw probabilities.
     raw_fin = np.array([
-        probabilities(*model.predict_lambdas(r.home_name, r.away_name, bool(r.neutral)),
-                      rho=model.rho).as_1x2()
+        probabilities(*model.predict_lambdas(
+            r.home_name, r.away_name, bool(r.neutral),
+            home_conf=getattr(r, "home_conf", None), away_conf=getattr(r, "away_conf", None)),
+            rho=model.rho).as_1x2()
         for r in finished.itertuples(index=False)
     ])
     calibrator = ProbabilityCalibrator().fit(raw_fin, _outcomes(finished))
@@ -95,7 +97,10 @@ def predict(competition: str) -> None:
     raw_fix = []
     ctx = []   # per-fixture context for reasoning (needs calibrated probs, set below)
     for r in fixtures.itertuples(index=False):
-        lam_h, lam_a = model.predict_lambdas(r.home_name, r.away_name, bool(r.neutral))
+        hc = getattr(r, "home_conf", None)
+        ac = getattr(r, "away_conf", None)
+        lam_h, lam_a = model.predict_lambdas(r.home_name, r.away_name, bool(r.neutral),
+                                             home_conf=hc, away_conf=ac)
         mp = probabilities(lam_h, lam_a, rho=model.rho)
         raw_fix.append(mp.as_1x2())
         pred_rows.append({
@@ -115,7 +120,7 @@ def predict(competition: str) -> None:
                     - elo_model.ratings.get(team_key(r.away_name), elo_model.base_rating))
         ctx.append({"home": r.home_name, "away": r.away_name, "neutral": bool(r.neutral),
                     "elo_diff": elo_diff, "elo_probs": (eh, ed, ea), "mp": mp,
-                    "raw": mp.as_1x2()})
+                    "raw": mp.as_1x2(), "home_conf": hc, "away_conf": ac})
 
     cal = calibrator.transform(np.array(raw_fix))
     for row, c, cx in zip(pred_rows, cal, ctx):
@@ -125,7 +130,7 @@ def predict(competition: str) -> None:
             cx["home"], cx["away"], neutral=cx["neutral"], model=model,
             elo_diff=cx["elo_diff"], p_cal=(float(c[0]), float(c[1]), float(c[2])),
             p_raw=cx["raw"], elo_probs=cx["elo_probs"], mp=cx["mp"],
-            recent_counts=recent_counts,
+            recent_counts=recent_counts, home_conf=cx["home_conf"], away_conf=cx["away_conf"],
         )
         row["reasoning_json"] = bundle.to_json()
 
