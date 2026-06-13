@@ -67,8 +67,27 @@ def init_db(engine: Engine | None = None) -> Engine:
             for stmt in (s.strip() for s in cleaned.split(";")):
                 if stmt:
                     conn.execute(text(stmt))
+    _apply_migrations(engine)
     log.info("db_initialized", url=settings.database_url, tables=len(list_tables(engine)))
     return engine
+
+
+def _apply_migrations(engine: Engine) -> None:
+    """Additive, idempotent schema upgrades for already-created databases.
+
+    ``CREATE TABLE IF NOT EXISTS`` never alters existing tables, so columns added
+    after a DB was first built must be patched in here. Each step is a no-op when
+    the column already exists.
+    """
+    _add_column_if_missing(engine, "predictions", "reasoning_json", "TEXT")
+
+
+def _add_column_if_missing(engine: Engine, table: str, column: str, decl: str) -> None:
+    with engine.begin() as conn:
+        cols = {r[1] for r in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if column not in cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {decl}"))
+            log.info("schema_migrated", table=table, added_column=column)
 
 
 def list_tables(engine: Engine | None = None) -> list[str]:

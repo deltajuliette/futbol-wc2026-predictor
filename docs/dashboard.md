@@ -18,6 +18,13 @@ If a number isn't traceable to a row, it doesn't appear.
 - **Implied market** probabilities after overround removal (de-vig method labeled).
 - **Opta public** benchmark when available.
 - **Uncertainty bands** on each probability — made visually obvious, not buried.
+- **Why (reasoning):** a headline + top-3 ranked drivers per fixture, generated
+  deterministically from the stored model quantities (`predictions.reasoning_json`),
+  not an LLM narrative. Drivers: `strength_gap` (Elo), `goals` (the exact log-linear
+  attack/defense/venue split of the expected-goals edge), `shape` (top scoreline,
+  draw risk, tempo), `edge` (vs Elo benchmark), `calibration` (raw→cal shift),
+  `uncertainty` (thin-sample caveat). Thresholds defining each phrase live in
+  `src/explain/reasons.py`. Reproducible: same prediction → identical text.
 
 ### 2. Match detail
 - Expected goals (λ_home, λ_away).

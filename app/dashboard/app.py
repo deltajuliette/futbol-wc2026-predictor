@@ -51,6 +51,25 @@ def _prob_bar(home: float, draw: float, away: float) -> go.Figure:
     return fig
 
 
+def _render_reasoning(reasoning_json: str | None) -> None:
+    """Show the deterministic 'why' behind a forecast: headline + ranked drivers."""
+    if not reasoning_json:
+        return
+    try:
+        bundle = json.loads(reasoning_json)
+    except (TypeError, ValueError):
+        return
+    drivers = bundle.get("drivers", [])
+    if bundle.get("headline"):
+        st.markdown(f"**Why:** {bundle['headline']}")
+    for d in drivers[:3]:
+        st.caption(f"• {d['text']}")
+    if len(drivers) > 3:
+        with st.expander(f"More factors ({len(drivers) - 3})"):
+            for d in drivers[3:]:
+                st.caption(f"• {d['text']}")
+
+
 def render() -> None:
     engine = _engine()
     run = latest_model_run(engine)
@@ -108,6 +127,7 @@ def render() -> None:
                               f"{r['exp_goals_home']:.1f} – {r['exp_goals_away']:.1f}")
                     st.caption(f"Most likely: {top}")
                     st.caption(f"BTTS {r['p_btts']:.0%} · Over 2.5 {r['p_over25']:.0%}")
+                _render_reasoning(r.get("reasoning_json"))
                 st.divider()
 
     # ---- Calibration & performance ----

@@ -42,7 +42,7 @@ def upcoming_predictions(engine: Engine, competition: str = "world_cup_2026") ->
                p.p_home_cal, p.p_draw_cal, p.p_away_cal,
                p.p_home_raw, p.p_draw_raw, p.p_away_raw,
                p.exp_goals_home, p.exp_goals_away, p.scoreline_json,
-               p.p_btts, p.p_over25, p.predicted_at_utc,
+               p.p_btts, p.p_over25, p.reasoning_json, p.predicted_at_utc,
                b.p_home AS elo_home, b.p_draw AS elo_draw, b.p_away AS elo_away
         FROM matches m
         JOIN predictions p

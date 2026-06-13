@@ -18,9 +18,11 @@ import uuid
 from datetime import UTC, datetime
 
 import numpy as np
+import pandas as pd
 from sqlalchemy import text
 
 from config.settings import PROJECT_ROOT
+from explain.reasons import explain
 from models.calibration import ProbabilityCalibrator
 from models.dixon_coles import DCModel
 from models.elo import HOME, AWAY, DRAW, train_elo
@@ -28,6 +30,7 @@ from models.scoreline import probabilities
 from storage.dao import load_matches_df, save_benchmarks, save_predictions
 from storage.database import get_engine, init_db
 from utils.logging import get_logger
+from utils.naming import team_key
 
 log = get_logger(__name__)
 
@@ -49,6 +52,19 @@ def _outcomes(df) -> np.ndarray:
     gh = df["home_goals"].astype(int).to_numpy()
     ga = df["away_goals"].astype(int).to_numpy()
     return np.where(gh > ga, HOME, np.where(gh == ga, DRAW, AWAY))
+
+
+def _recent_counts(finished: pd.DataFrame, days: int = 730) -> dict[str, int]:
+    """Matches per team_key within the last ``days`` — drives the thin-sample caveat."""
+    if finished.empty:
+        return {}
+    cutoff = finished["kickoff_utc"].max() - pd.Timedelta(days=days)
+    recent = finished[finished["kickoff_utc"] >= cutoff]
+    counts: dict[str, int] = {}
+    for r in recent.itertuples(index=False):
+        for name in (r.home_name, r.away_name):
+            counts[team_key(name)] = counts.get(team_key(name), 0) + 1
+    return counts
 
 
 def predict(competition: str) -> None:
@@ -74,8 +90,10 @@ def predict(competition: str) -> None:
     # Score fixtures.
     pred_rows, elo_rows = [], []
     elo_model = train_elo(finished)
+    recent_counts = _recent_counts(finished)
     now = datetime.now(UTC).isoformat()
     raw_fix = []
+    ctx = []   # per-fixture context for reasoning (needs calibrated probs, set below)
     for r in fixtures.itertuples(index=False):
         lam_h, lam_a = model.predict_lambdas(r.home_name, r.away_name, bool(r.neutral))
         mp = probabilities(lam_h, lam_a, rho=model.rho)
@@ -93,11 +111,23 @@ def predict(competition: str) -> None:
             "match_id": r.match_id, "source": "elo_only", "method": "logistic",
             "p_home": eh, "p_draw": ed, "p_away": ea, "captured_at_utc": now,
         })
+        elo_diff = (elo_model.ratings.get(team_key(r.home_name), elo_model.base_rating)
+                    - elo_model.ratings.get(team_key(r.away_name), elo_model.base_rating))
+        ctx.append({"home": r.home_name, "away": r.away_name, "neutral": bool(r.neutral),
+                    "elo_diff": elo_diff, "elo_probs": (eh, ed, ea), "mp": mp,
+                    "raw": mp.as_1x2()})
 
     cal = calibrator.transform(np.array(raw_fix))
-    for row, c in zip(pred_rows, cal):
+    for row, c, cx in zip(pred_rows, cal, ctx):
         row["p_home_cal"], row["p_draw_cal"], row["p_away_cal"] = (
             float(c[0]), float(c[1]), float(c[2]))
+        bundle = explain(
+            cx["home"], cx["away"], neutral=cx["neutral"], model=model,
+            elo_diff=cx["elo_diff"], p_cal=(float(c[0]), float(c[1]), float(c[2])),
+            p_raw=cx["raw"], elo_probs=cx["elo_probs"], mp=cx["mp"],
+            recent_counts=recent_counts,
+        )
+        row["reasoning_json"] = bundle.to_json()
 
     run = uuid.uuid4().hex[:12]
     n_pred = save_predictions(engine, model_run_id, pred_rows)

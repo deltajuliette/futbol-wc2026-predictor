@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     p_btts          REAL,
     p_over25        REAL,
     ci_json         TEXT,
+    reasoning_json  TEXT,                          -- deterministic per-prediction drivers
     predicted_at_utc TEXT,
     UNIQUE (model_run_id, match_id)
 );

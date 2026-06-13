@@ -204,7 +204,8 @@ def save_predictions(engine: Engine, model_run_id: int, rows: list[dict]) -> int
     cols = [
         "match_id", "p_home_raw", "p_draw_raw", "p_away_raw",
         "p_home_cal", "p_draw_cal", "p_away_cal", "exp_goals_home", "exp_goals_away",
-        "scoreline_json", "p_btts", "p_over25", "ci_json", "predicted_at_utc",
+        "scoreline_json", "p_btts", "p_over25", "ci_json", "reasoning_json",
+        "predicted_at_utc",
     ]
     placeholders = ", ".join(f":{c}" for c in cols)
     updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "match_id")
