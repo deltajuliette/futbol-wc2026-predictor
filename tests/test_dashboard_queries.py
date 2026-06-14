@@ -59,6 +59,29 @@ def test_upcoming_predictions_joins_model_and_benchmark(engine):
     assert row["edge_home_vs_elo"] == pytest.approx(0.52 - 0.45)
 
 
+def test_past_kickoff_fixture_is_excluded(engine):
+    # A fixture still marked 'scheduled' but whose kickoff has already passed (stale
+    # data pull) must not appear in the upcoming list.
+    from datetime import timedelta
+
+    rec = FixtureRecord(
+        competition="world_cup_2026", stage="group",
+        kickoff_utc=datetime.now(UTC) - timedelta(hours=3),
+        home_team="Qatar", away_team="Switzerland", neutral=True,
+        status="scheduled", provenance=Provenance(source="test"),
+    )
+    mid = upsert_match(engine, rec)
+    run = create_model_run(engine, "dixon_coles")
+    save_predictions(engine, run, [{
+        "match_id": mid, "p_home_raw": 0.4, "p_draw_raw": 0.3, "p_away_raw": 0.3,
+        "p_home_cal": 0.4, "p_draw_cal": 0.3, "p_away_cal": 0.3,
+        "exp_goals_home": 1.2, "exp_goals_away": 1.1,
+        "scoreline_json": json.dumps([["1-1", 0.12]]), "p_btts": 0.5, "p_over25": 0.5,
+        "predicted_at_utc": datetime.now(UTC).isoformat(),
+    }])
+    assert upcoming_predictions(engine).empty
+
+
 def test_reruns_do_not_multiply_rows(engine):
     # Two model runs + two benchmark snapshots for the same fixture must still yield
     # ONE row (latest run + latest benchmark), not 2x2=4.

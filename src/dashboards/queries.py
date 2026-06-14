@@ -65,6 +65,11 @@ def upcoming_predictions(engine: Engine, competition: str = "world_cup_2026") ->
         df = pd.read_sql_query(text(q), conn, params={"c": competition})
     if not df.empty:
         df["kickoff_utc"] = pd.to_datetime(df["kickoff_utc"], utc=True)
+        # Defensive freshness guard: drop fixtures whose kickoff has already passed.
+        # A fixture can linger as 'scheduled' if the data pull is staler than the match
+        # (it has kicked off but the snapshot predates it), so filter on wall-clock time
+        # rather than trusting status alone.
+        df = df[df["kickoff_utc"] > pd.Timestamp.now(tz="UTC")].reset_index(drop=True)
         # Edge vs the Elo benchmark on the home line (market edge when odds exist).
         df["edge_home_vs_elo"] = df["p_home_cal"] - df["elo_home"]
     return df
