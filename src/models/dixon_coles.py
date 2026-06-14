@@ -103,6 +103,7 @@ def fit_dixon_coles(
     use_confederation: bool = False,
     conf_ridge: float = 5.0,
     conf_bound: float = 0.5,
+    min_matches: int = 0,
 ) -> DCModel:
     """Fit the model on finished matches.
 
@@ -115,10 +116,32 @@ def fit_dixon_coles(
     between confederations that rarely play each other. It is centered at zero, ridge-
     shrunk (``conf_ridge``), and bounded (``conf_bound``). Teams with an unknown
     confederation contribute no confederation term.
+
+    ``min_matches`` drops thin-sample teams: any team appearing in fewer than
+    ``min_matches`` finished games is excluded, along with the matches involving it.
+    This removes CONIFA/non-FIFA micro-nations (which play few games against each other
+    and otherwise acquire wildly inflated ratings) from the public-results dataset. The
+    default 0 keeps all teams.
     """
     df = matches.dropna(subset=["home_goals", "away_goals"]).copy()
     if df.empty:
         raise ValueError("no finished matches to fit on")
+
+    if min_matches > 0:
+        hk = df["home_name"].map(team_key)
+        ak = df["away_name"].map(team_key)
+        appearances = pd.concat([hk, ak]).value_counts()
+        keep_keys = set(appearances[appearances >= min_matches].index)
+        mask = hk.isin(keep_keys) & ak.isin(keep_keys)
+        dropped_teams = len(appearances) - len(keep_keys)
+        if dropped_teams:
+            log.info("dixon_coles_min_matches_filter", min_matches=min_matches,
+                     dropped_teams=dropped_teams, dropped_matches=int((~mask).sum()),
+                     kept_matches=int(mask.sum()))
+        df = df[mask].copy()
+        if df.empty:
+            raise ValueError(f"no matches left after min_matches={min_matches} filter")
+
     df["home_goals"] = df["home_goals"].astype(int)
     df["away_goals"] = df["away_goals"].astype(int)
     as_of = as_of or df["kickoff_utc"].max().to_pydatetime()

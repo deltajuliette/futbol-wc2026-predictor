@@ -22,13 +22,15 @@ from utils.logging import get_logger
 log = get_logger(__name__)
 
 
-def train(half_life_days: float = 365.0, use_confederation: bool = False) -> int:
+def train(half_life_days: float = 365.0, use_confederation: bool = False,
+          min_matches: int = 25) -> int:
     engine = init_db(get_engine())
     matches = load_matches_df(engine, finished_only=True)
     if matches.empty:
         raise SystemExit("no finished matches — run the ETL first")
     model = fit_dixon_coles(matches, half_life_days=half_life_days,
-                            use_confederation=use_confederation)
+                            use_confederation=use_confederation,
+                            min_matches=min_matches)
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     art_dir = PROJECT_ROOT / "models" / "artifacts" / f"dixon_coles_{stamp}"
@@ -44,6 +46,7 @@ def train(half_life_days: float = 365.0, use_confederation: bool = False) -> int
         params_json=json.dumps({"half_life_days": half_life_days,
                                 "home_adv": model.home_adv, "rho": model.rho,
                                 "use_confederation": use_confederation,
+                                "min_matches": min_matches,
                                 "conf_adj": model.conf_adj}),
         feature_set_version="dc-strengths",
         artifact_path=str(art_path.relative_to(PROJECT_ROOT)),
@@ -58,8 +61,11 @@ def main() -> None:
     ap.add_argument("--half-life", type=float, default=365.0, help="time-decay half life (days)")
     ap.add_argument("--confederation", action="store_true",
                     help="fit the cross-confederation relative-strength correction")
+    ap.add_argument("--min-matches", type=int, default=25,
+                    help="drop teams with fewer than N finished matches (0 = keep all)")
     args = ap.parse_args()
-    train(args.half_life, use_confederation=args.confederation)
+    train(args.half_life, use_confederation=args.confederation,
+          min_matches=args.min_matches)
 
 
 if __name__ == "__main__":
