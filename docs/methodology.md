@@ -250,13 +250,14 @@ definitions. Stored in `predictions.reasoning_json`, versioned by `model_run_id`
   fiction). xG enrichment is scaffolded behind an adapter for later.
 - **Confederation correction — evaluated, not shipped.** A cross-confederation
   relative-strength term (correcting the weak rating linkage between pools that rarely
-  meet) is fully implemented, tested, and gated behind `--confederation`. Under honest
-  regularization it does **not** beat the calibrated baseline (Δlog-loss ≈ +7e-5,
-  i.e. a hair worse). The large coefficients seen at weak regularization were
-  overfitting the bound; the genuine signal is real-but-negligible. Per "avoid
-  complexity unless it clearly beats calibrated baselines," production runs with it
-  **off**. The capability remains for re-evaluation as tournament data accrues. Teams'
-  confederations are populated (`scripts/etl/populate_confederations.py`) from a
+  meet) is fully implemented, tested, and gated behind `--confederation`. On the earlier
+  *synthetic* training data it did not beat the calibrated baseline (Δlog-loss ≈ +7e-5,
+  a hair worse), and the large coefficients seen at weak regularization were overfitting
+  the bound. On the **real** results dataset a backtest shows it marginally *helping*
+  (Δlog-loss ≈ −4e-4) — a sign flip, but still tiny and from a single run. Per "avoid
+  complexity unless it clearly beats calibrated baselines," production still runs with it
+  **off** pending a proper re-evaluation (multiple seeds/folds) now that the data is real.
+  Teams' confederations are populated (`scripts/etl/populate_confederations.py`) from a
   curated reference map; CONIFA/unaffiliated entities are intentionally left NULL.
 - **Team-identity dedup.** The two ingest sources spelled several teams differently
   (e.g. "Czechia"/"Czech Republic"), and resolution keyed only on the name slug, so
@@ -265,15 +266,24 @@ definitions. Stored in `predictions.reasoning_json`, versioned by `model_run_id`
   (`team_aliases`), and `scripts/etl/merge_duplicate_teams.py` merged the splits onto
   the canonical, history-bearing team. This materially corrected those forecasts
   (e.g. Spain v Cape Verde 98%→87%).
-- **Fixtures are the real draw, history is synthetic.** The World Cup fixtures to
-  predict are the actual schedule, derived from the cached football-data.org pull by
-  `scripts/etl/build_wc_fixtures.py` into `data/reference/wc2026_fixtures.csv`. (An
-  earlier synthetic generator fabricated fixtures by randomly pairing the strongest
-  synthetic teams, which produced impossible matchups like "Qatar vs Brazil";
-  `make_sample_data` now produces history only.) Until real results are ingested, the
-  *training* history is still synthetic, so real teams absent from the synthetic pool
-  (e.g. South Africa, Curaçao, Uzbekistan) score at league-average — a known limitation,
-  not a modeling claim.
+- **Real data, real fixtures.** Team strength is fit on ~11.8k real international
+  results (2014→present, martj42 CC0 dataset via `scripts/etl/pull_open_results.py`),
+  and the World Cup fixtures to predict are the actual schedule, derived from the cached
+  football-data.org pull by `scripts/etl/build_wc_fixtures.py` into
+  `data/reference/wc2026_fixtures.csv`. (Earlier the pipeline trained on a synthetic
+  generator and fabricated fixtures by randomly pairing the strongest synthetic teams —
+  producing nonsense like "Qatar vs Brazil" and Germany rated below league-average;
+  `make_sample_data` is now retained only for deterministic offline tests.)
+- **Thin-sample filter (`--min-matches`, default 25).** The public results dataset
+  includes CONIFA/non-FIFA micro-nations (Tibet, Menorca, Chagos Islands, …) that play
+  few games against each other and otherwise acquire wildly inflated attack/defense
+  ratings. `fit_dixon_coles(min_matches=...)` drops any team below the threshold (and the
+  matches involving it) before fitting; 25 removes ~83 such teams while keeping every WC
+  side (the thinnest, New Zealand, has 81 matches). Note this does not fully solve
+  cross-pool rating identifiability — FIFA minnows that beat weaker regional opponents
+  but never face top sides can still rank surprisingly high in the raw attack−defense
+  table; this does not distort head-to-heads between well-connected teams (the
+  confederation correction in the bullet above targets the same weak-linkage problem).
 - Neutral-venue handling is applied throughout (all World Cup fixtures are marked
   neutral; host-nation home advantage for USA/Canada/Mexico is **not** modeled), but
   **knockout-specific dynamics** (extra time, penalties) are not yet modeled as a
