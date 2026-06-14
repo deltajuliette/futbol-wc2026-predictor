@@ -20,7 +20,15 @@ at the parser level, pending an API key. Docs:
 In a backtest on the bundled synthetic data, calibrated Dixon-Coles beats the
 Elo-only and uniform baselines on log loss, Brier, and RPS.
 
-**Recent updates.** Team-identity resolution is now alias-aware (`team_aliases`), with
+**Recent updates.** The World Cup fixtures to predict are now the **real tournament
+schedule** (`data/reference/wc2026_fixtures.csv`, derived from the cached football-data.org
+pull by `scripts.etl.build_wc_fixtures`). The previous synthetic slate randomly paired the
+strongest synthetic teams and produced impossible matchups like "Qatar vs Brazil";
+`make_sample_data` now generates **history only** and no longer overwrites the fixtures.
+Note: with synthetic training history, real teams absent from the synthetic pool currently
+score at league-average until real results are ingested.
+
+Team-identity resolution is now alias-aware (`team_aliases`), with
 a merge step that collapses sources' duplicate spellings onto one canonical, history-
 bearing team — fixing sides that were otherwise scored as league-average. A
 cross-confederation relative-strength correction is implemented, tested, and gated
@@ -30,9 +38,10 @@ production runs with it off (see [methodology §8](docs/methodology.md)).
 ```bash
 # After install (see Quickstart), reproduce the whole pipeline:
 python -m scripts.etl.init_db
-python -m scripts.etl.make_sample_data --seed 7
+python -m scripts.etl.make_sample_data --seed 7        # synthetic history only (results.csv)
 python -m scripts.etl.load_intl_results --path data/raw/intl_results/results.csv
-python -m scripts.etl.load_intl_results --path data/raw/intl_results/upcoming_wc.csv
+python -m scripts.etl.build_wc_fixtures                # refresh real WC fixtures from cached pull (checked-in CSV is the fallback)
+python -m scripts.etl.load_intl_results --path data/reference/wc2026_fixtures.csv
 python -m scripts.etl.merge_duplicate_teams            # collapse split team identities
 python -m scripts.etl.populate_confederations          # fill teams.confederation
 python -m scripts.features.build_features

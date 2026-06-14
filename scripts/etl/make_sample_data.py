@@ -7,7 +7,11 @@ meaningful even without live data. Replace with real ingestion once an API key e
 
 Outputs (immutable raw):
     data/raw/intl_results/results.csv       finished historical matches
-    data/raw/intl_results/upcoming_wc.csv   scheduled neutral-venue fixtures to predict
+
+This generates *history only*. The World Cup fixtures to predict are the real schedule,
+built separately by ``scripts.etl.build_wc_fixtures`` into
+``data/reference/wc2026_fixtures.csv`` (this script no longer fabricates a fixtures
+slate — that produced impossible matchups like "Qatar vs Brazil").
 
 Example::
 
@@ -18,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime, timedelta
-from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +46,7 @@ TEAM_POOL = [
 ]
 
 
-def _simulate(n_teams: int, years: int, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _simulate(n_teams: int, years: int, seed: int) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     teams = TEAM_POOL[:n_teams]
     n = len(teams)
@@ -83,36 +86,7 @@ def _simulate(n_teams: int, years: int, seed: int) -> tuple[pd.DataFrame, pd.Dat
                 "neutral": int(neutral),
             })
 
-    results = pd.DataFrame(rows)
-
-    # Upcoming World Cup: a neutral-venue round-robin sample among the 24 strongest
-    # teams by current latent strength, dated just after the history ends.
-    strength = attack - defense
-    top = [teams[i] for i in np.argsort(strength)[::-1][:24]]
-    kickoff0 = datetime(2026, 6, 11, 18, 0, tzinfo=UTC)
-    fixtures = []
-    # Pair them into a manageable slate (12 matches) without repeats.
-    pairs = list(combinations(range(len(top)), 2))
-    rng.shuffle(pairs)
-    used: set[int] = set()
-    slot = 0
-    for i, j in pairs:
-        if i in used or j in used:
-            continue
-        used.update({i, j})
-        fixtures.append({
-            "date": (kickoff0 + timedelta(days=slot // 4, hours=3 * (slot % 4))).isoformat(),
-            "competition": "world_cup_2026",
-            "stage": "group",
-            "home_team": top[i],
-            "away_team": top[j],
-            "neutral": 1,
-        })
-        slot += 1
-        if len(used) >= len(top):
-            break
-
-    return results, pd.DataFrame(fixtures)
+    return pd.DataFrame(rows)
 
 
 def main() -> None:
@@ -123,13 +97,11 @@ def main() -> None:
     args = ap.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    results, fixtures = _simulate(min(args.teams, len(TEAM_POOL)), args.years, args.seed)
+    results = _simulate(min(args.teams, len(TEAM_POOL)), args.years, args.seed)
     results.to_csv(OUT_DIR / "results.csv", index=False)
-    fixtures.to_csv(OUT_DIR / "upcoming_wc.csv", index=False)
     log.info(
         "sample_data_written",
         results=len(results),
-        fixtures=len(fixtures),
         out=str(OUT_DIR.relative_to(PROJECT_ROOT)),
     )
 

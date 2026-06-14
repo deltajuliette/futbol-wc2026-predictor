@@ -265,8 +265,19 @@ definitions. Stored in `predictions.reasoning_json`, versioned by `model_run_id`
   (`team_aliases`), and `scripts/etl/merge_duplicate_teams.py` merged the splits onto
   the canonical, history-bearing team. This materially corrected those forecasts
   (e.g. Spain v Cape Verde 98%→87%).
-- Neutral-venue handling is applied throughout, but **knockout-specific dynamics**
-  (extra time, penalties) are not yet modeled as a separate target.
+- **Fixtures are the real draw, history is synthetic.** The World Cup fixtures to
+  predict are the actual schedule, derived from the cached football-data.org pull by
+  `scripts/etl/build_wc_fixtures.py` into `data/reference/wc2026_fixtures.csv`. (An
+  earlier synthetic generator fabricated fixtures by randomly pairing the strongest
+  synthetic teams, which produced impossible matchups like "Qatar vs Brazil";
+  `make_sample_data` now produces history only.) Until real results are ingested, the
+  *training* history is still synthetic, so real teams absent from the synthetic pool
+  (e.g. South Africa, Curaçao, Uzbekistan) score at league-average — a known limitation,
+  not a modeling claim.
+- Neutral-venue handling is applied throughout (all World Cup fixtures are marked
+  neutral; host-nation home advantage for USA/Canada/Mexico is **not** modeled), but
+  **knockout-specific dynamics** (extra time, penalties) are not yet modeled as a
+  separate target.
 - The market benchmark depends on odds being ingested; where odds are absent, only the
   Elo benchmark is shown.
 - The optimizer's `converged = False` flag is benign (see §3a) but is called out for
