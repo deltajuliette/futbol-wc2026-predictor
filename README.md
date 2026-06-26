@@ -30,7 +30,10 @@ schedule** (`data/reference/wc2026_fixtures.csv`, derived from the cached footba
 pull by `scripts.etl.build_wc_fixtures`); an earlier synthetic slate randomly paired the
 strongest synthetic teams and produced impossible matchups like "Qatar vs Brazil".
 `make_sample_data` remains for deterministic offline tests but is no longer the training
-default.
+default. The model is refreshed through the **2026-06-24** results; an out-of-fold study of
+how in-tournament games affect forecasts moved the time-decay half-life from 540 to **1095
+days** and confirmed that up-weighting tournament games does not help (see
+`docs/methodology.md` §3c, `scripts/evaluation/recency_impact.py`, `recency_sweep.py`).
 
 Team-identity resolution is now alias-aware (`team_aliases`), with
 a merge step that collapses sources' duplicate spellings onto one canonical, history-
@@ -48,7 +51,7 @@ python -m scripts.etl.load_intl_results --path data/reference/wc2026_fixtures.cs
 python -m scripts.etl.merge_duplicate_teams            # collapse split team identities
 python -m scripts.etl.populate_confederations          # fill teams.confederation
 python -m scripts.features.build_features
-python -m scripts.modeling.train_dixon_coles --half-life 540   # --min-matches 25 (default) drops CONIFA minnows; --confederation for the gated experiment
+python -m scripts.modeling.train_dixon_coles --half-life 1095   # --min-matches 25 (default) drops CONIFA minnows; --confederation for the gated experiment
 python -m scripts.modeling.predict --competition world_cup_2026
 python -m scripts.evaluation.backtest --folds 4
 streamlit run app/dashboard/app.py

@@ -104,8 +104,11 @@ log(λ_away) = intercept + attack_away − defense_home
   evaluation, plus a small **ridge penalty (1e-3)** that also stabilizes teams with
   few matches.
 - **Time decay:** older matches count less, via exponential decay with a
-  **half-life of 540 days** (a match that old counts half as much as a fresh one).
-  This keeps the ratings current without throwing away history.
+  **half-life of 1095 days (~3 years)** (a match that old counts half as much as a fresh
+  one). This keeps the ratings current without throwing away history. The half-life was
+  tuned out-of-fold — see §3c. An optional `tournament_weight` lever can up-weight
+  World Cup-stage games on top of the decay; it is **off by default** because it does not
+  help out-of-fold (also §3c).
 - **Dixon-Coles low-score correction (`ρ`, bounded to ±0.18):** plain Poisson slightly
   misprices the very common 0–0 / 1–0 / 0–1 / 1–1 results; `ρ` nudges exactly those
   four cells.
@@ -129,6 +132,51 @@ compute the probability of 0, 1, 2, … goals for each side, combine them into a
   (row/column means), **most likely scorelines** (top cells), **BTTS**, and
   **over/under 2.5**. All outputs come from one coherent object, so they are mutually
   consistent.
+
+### 3c. Do recent (in-tournament) results change the forecasts?
+
+**Question.** Once World Cup group games are played, how much do they move the
+predictions for the games still to come — and should recent games count for *more*?
+
+**How recent games enter.** The training corpus is the public international-results feed
+(`scripts/etl/pull_open_results.py`), which already carries the live World Cup games under
+stage `FIFA World Cup`. So every finished tournament match feeds the next retrain
+automatically. (The `world_cup_2026` table is only the fixture list to *predict*; its rows
+stay `scheduled` and are never trained on, which is what keeps the same game from being
+counted twice.)
+
+**Ablation (`scripts/evaluation/recency_impact.py`).** We fit two otherwise-identical
+models — one trained *excluding* the 54 played WC games, one *including* them — and
+compared their calibrated forecasts for the 12 upcoming fixtures (as of 2026-06-26).
+At the production half-life the games move forecasts **modestly**: mean total-variation
+distance **≈0.015** (about 1.5 percentage points of probability mass shifted per match),
+max ≈0.034, and **zero** fixtures changed their most-likely outcome. Biggest movers were
+matches involving teams whose group form diverged from their long-run rating
+(e.g. DR Congo, Croatia). This is expected: a handful of games per team is a small sample
+against years of history.
+
+**Tuning the recency lever (`scripts/evaluation/recency_sweep.py`).** We swept the
+time-decay half-life and the optional tournament weight in a time-respecting rolling-origin
+backtest, scoring held-out matches overall **and** on the tournament subset:
+
+| half-life (days) | log loss (all) | log loss (tournament) |
+|---|---|---|
+| 365 | 0.9030 | 0.8018 |
+| 540 (previous default) | 0.8984 | 0.7977 |
+| 730 | 0.8968 | 0.7960 |
+| **1095 (new default)** | **0.8963** | **0.7956** |
+| 1460 | 0.8966 | 0.7961 |
+| 2000 | 0.8972 | 0.7971 |
+
+Up-weighting tournament games (`tournament_weight` 4× / 8×) made log loss **worse** at
+every half-life, so it stays off. The best half-life is an interior optimum at **~1095
+days**, consistent across log loss, Brier, and RPS on both the overall and tournament sets.
+
+**Takeaway (counterintuitive but honest).** Recent results do shift the forecasts, but
+trying to make them count *more* — a shorter half-life or a tournament up-weight — *hurts*
+calibration out-of-fold. The best forecasts come from a slightly **longer** memory than
+before (540 → 1095 days), i.e. recent games should count a little *less*, not more. The
+improvement is small (~0.002 log loss) but consistent, so we adopted it.
 
 ---
 
@@ -188,15 +236,16 @@ splits with out-of-fold calibration.
 
 | Model | Log loss | Interpretation |
 |---|---:|---|
-| **Calibrated Dixon-Coles** (`dc_cal`) | **0.859** | the production forecast |
-| Calibrated DC + confederation (`dc_cal_conf`) | 0.859 | evaluated, **not shipped** (see §8) |
-| Elo-only benchmark | 1.016 | simple baseline |
+| **Calibrated Dixon-Coles** (`dc_cal`) | **0.878** | the production forecast |
+| Calibrated DC + confederation (`dc_cal_conf`) | 0.878 | evaluated, **not shipped** (see §8) |
+| Raw Dixon-Coles (`dc_raw`) | 0.882 | before calibration |
+| Elo-only benchmark | 1.014 | simple baseline |
 | Uniform (1/3 each) | 1.099 | blind guessing |
 
-Lower is better (3,556 held-out matches, 4 rolling-origin folds). The calibrated goal
-model beats both baselines, and calibration both improves the scores and reduces
-overconfidence (sharpness). Sample real forecasts pass the smell test (e.g., Spain
-~0.87 vs Cape Verde; Switzerland favored over Qatar).
+Lower is better (2,975 held-out matches, 3 rolling-origin folds, half-life 1095 days,
+trained through the 2026-06-24 results). The calibrated goal model beats both baselines,
+and calibration both improves the scores and reduces overconfidence (sharpness). Sample
+real forecasts pass the smell test (e.g., Spain favored over Uruguay; France over Norway).
 
 ---
 
@@ -233,7 +282,7 @@ definitions. Stored in `predictions.reasoning_json`, versioned by `model_run_id`
 - **Read-only dashboard** (Streamlit, `app/dashboard/app.py`): renders only stored
   tables; never recomputes. Every panel is stamped with its `model_run_id` and
   timestamps.
-- **Tests:** 42 automated tests. Notably, the reasoning layer has a *rigor* test that
+- **Tests:** 64 automated tests. Notably, the reasoning layer has a *rigor* test that
   asserts the goals decomposition equals the model's own `log(λ_home/λ_away)` to
   machine precision, plus a reproducibility test (same prediction → byte-identical
   text).
@@ -245,6 +294,14 @@ definitions. Stored in `predictions.reasoning_json`, versioned by `model_run_id`
 ## 8. Assumptions, caveats, and what's next
 
 **Assumptions / caveats (stated plainly).**
+- **Training corpus vs fixture list (no double-counting).** Live World Cup results enter
+  training through the international-results feed (stage `FIFA World Cup`); the
+  `world_cup_2026` table is only the list of fixtures to *predict* and its rows stay
+  `scheduled`. Training reads all `finished` matches, so flipping `world_cup_2026` rows to
+  `finished` (e.g. via the football-data `pull_fixtures` path) would count each played WC
+  game twice. The refresh therefore uses `pull_open_results`, and the recency study relies
+  on this invariant. Already-played fixtures still marked `scheduled` are dropped from the
+  dashboard by a wall-clock guard.
 - Team strength is inferred from results only; **no lineup, injury, or xG inputs are
   currently in the model** — so the reasoning layer never cites them (that would be
   fiction). xG enrichment is scaffolded behind an adapter for later.

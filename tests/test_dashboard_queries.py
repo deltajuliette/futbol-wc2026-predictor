@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -27,7 +27,9 @@ def engine(tmp_path):
 def _scheduled(engine):
     rec = FixtureRecord(
         competition="world_cup_2026", stage="group",
-        kickoff_utc=datetime(2026, 6, 20, 18, tzinfo=UTC),
+        # Relative to now so the fixture stays in the future as real time advances
+        # (upcoming_predictions filters out kickoffs that have already passed).
+        kickoff_utc=datetime.now(UTC) + timedelta(days=7),
         home_team="Brazil", away_team="Argentina", neutral=True,
         status="scheduled", provenance=Provenance(source="test"),
     )

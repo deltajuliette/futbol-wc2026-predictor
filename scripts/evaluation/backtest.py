@@ -50,8 +50,8 @@ def _dc_probs(model, df) -> np.ndarray:
     return np.array(out)
 
 
-def backtest(folds: int = 4, test_frac: float = 0.3, half_life: float = 540.0,
-             min_matches: int = 25) -> None:
+def backtest(folds: int = 4, test_frac: float = 0.3, half_life: float = 1095.0,
+             min_matches: int = 25, tournament_weight: float = 1.0) -> None:
     engine = init_db(get_engine())
     df = load_matches_df(engine, finished_only=True).sort_values("kickoff_utc").reset_index(drop=True)
     if len(df) < 200:
@@ -72,7 +72,8 @@ def backtest(folds: int = 4, test_frac: float = 0.3, half_life: float = 540.0,
         train = df.iloc[:lo]
         test = df.iloc[lo:hi]
 
-        dc = fit_dixon_coles(train, half_life_days=half_life, min_matches=min_matches)
+        dc = fit_dixon_coles(train, half_life_days=half_life, min_matches=min_matches,
+                             tournament_weight=tournament_weight)
         elo = train_elo(train)
         # OOF calibration: fit on train DC probs, apply to test.
         calib = ProbabilityCalibrator().fit(_dc_probs(dc, train), _outcomes(train))
@@ -117,7 +118,8 @@ def backtest(folds: int = 4, test_frac: float = 0.3, half_life: float = 540.0,
                 ),
                 {"l": name, "a": as_of, "n": s.n, "ll": s.log_loss, "b": s.brier,
                  "r": s.rps, "c": json.dumps(rel), "s": s.sharpness,
-                 "notes": f"rolling-origin folds={folds} half_life={half_life} run={run_stamp}"},
+                 "notes": f"rolling-origin folds={folds} half_life={half_life} "
+                          f"tw={tournament_weight} run={run_stamp}"},
             )
 
     best = min(("dc_cal", "dc_cal_conf", "dc_raw"), key=lambda k: results[k].log_loss)
@@ -135,8 +137,11 @@ def main() -> None:
     ap.add_argument("--half-life", type=float, default=540.0)
     ap.add_argument("--min-matches", type=int, default=25,
                     help="drop teams with fewer than N finished matches (0 = keep all)")
+    ap.add_argument("--tournament-weight", type=float, default=1.0,
+                    help="multiplier on World Cup-stage games in the DC fit (1.0 = off)")
     args = ap.parse_args()
-    backtest(args.folds, args.test_frac, args.half_life, min_matches=args.min_matches)
+    backtest(args.folds, args.test_frac, args.half_life, min_matches=args.min_matches,
+             tournament_weight=args.tournament_weight)
 
 
 if __name__ == "__main__":
