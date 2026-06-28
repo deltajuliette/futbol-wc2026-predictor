@@ -17,7 +17,7 @@ and derived markets (both-teams-to-score, over/under 2.5). It is built to be
 
 The pipeline is a four-stage assembly line:
 
-1. **Rate every team's strength** from ~11,850 historical internationals (Elo).
+1. **Rate every team's strength** from ~11,900 historical internationals (Elo).
 2. **Convert strengths into a goal model** and expand it into a full scoreline grid
    (Dixon-Coles / Poisson).
 3. **Calibrate** the raw probabilities so the stated confidence is honest.
@@ -39,13 +39,19 @@ each team is. So the *spine* of the system is the long history of international
 football; the tournament fixtures sit on top of that.
 
 **Specifics.**
-- **Historical internationals (~11,852 matches):** public, CC0-licensed dataset
-  (`martj42/international_results`), loaded via
-  `scripts/etl/pull_open_results.py`. No API key required.
-- **Tournament fixtures & results (68 World Cup 2026 fixtures):** football-data.org
-  v4 API (`X-Auth-Token` header), via `scripts/etl/pull_fixtures.py`. Idempotent
-  upserts; undecided knockout slots ("Winner Group A") are skipped until teams are
-  known.
+- **Historical internationals (~11,900 matches, through 2026-06-27):** public,
+  CC0-licensed dataset (`martj42/international_results`), loaded via
+  `scripts/etl/pull_open_results.py`. No API key required. This feed also carries the
+  live World Cup results (stage `FIFA World Cup`), so every finished tournament match
+  enters the next retrain automatically.
+- **Tournament fixtures (World Cup 2026):** football-data.org v4 API (`X-Auth-Token`
+  header). A refresh of the cached pull resolves knockout matchups as each round's
+  participants are decided; `scripts/etl/build_wc_fixtures.py` derives
+  `data/reference/wc2026_fixtures.csv` from it. Undecided slots ("Winner Group A") are
+  skipped until teams are known. The forecast slate in the `world_cup_2026` table holds
+  only **scheduled** fixtures (loaded score-free); finished games are never loaded there
+  (see §8, no double-counting). As of 2026-06-28 the group stage is complete and the
+  **16 round-of-32** fixtures are the live slate.
 - **Storage:** SQLite via SQLAlchemy 2.0 (`db/worldcup.sqlite`), schema portable to
   Postgres. Ten tables (`matches`, `teams`, `odds_snapshots`, `predictions`,
   `benchmark_predictions`, `model_runs`, `evaluation_metrics`, …). Raw payloads are
@@ -323,7 +329,7 @@ definitions. Stored in `predictions.reasoning_json`, versioned by `model_run_id`
   (`team_aliases`), and `scripts/etl/merge_duplicate_teams.py` merged the splits onto
   the canonical, history-bearing team. This materially corrected those forecasts
   (e.g. Spain v Cape Verde 98%→87%).
-- **Real data, real fixtures.** Team strength is fit on ~11.8k real international
+- **Real data, real fixtures.** Team strength is fit on ~11.9k real international
   results (2014→present, martj42 CC0 dataset via `scripts/etl/pull_open_results.py`),
   and the World Cup fixtures to predict are the actual schedule, derived from the cached
   football-data.org pull by `scripts/etl/build_wc_fixtures.py` into
@@ -354,9 +360,13 @@ definitions. Stored in `predictions.reasoning_json`, versioned by `model_run_id`
 - Add covariates (rest days, recent xG form) once xG ingestion is wired.
 - Model knockout progression (advance ≠ win-in-90) as a distinct output.
 - Accumulate live results through the tournament to refresh calibration and the
-  backtest as real matches finish.
+  backtest as real matches finish. **In progress:** the group stage is complete; training
+  is refreshed through 2026-06-27 and the live slate has advanced to the round of 32. Each
+  round's knockout matchups load (scheduled, score-free) once the prior round resolves,
+  via a fresh football-data pull → `build_wc_fixtures` → loading only the new scheduled
+  rows.
 
 ---
 
-*All figures in this memo are reproducible from `db/worldcup.sqlite` (model run #5) via
+*All figures in this memo are reproducible from `db/worldcup.sqlite` (model run #4) via
 `python -m scripts.update`. File references point to the committed source.*
