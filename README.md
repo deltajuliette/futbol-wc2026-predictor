@@ -11,9 +11,10 @@ for the design.
 
 ## Status
 **End-to-end pipeline working on real data** (Elo + calibrated Dixon-Coles →
-evaluation → Streamlit). Team strength is fit on ~11.8k real international results
+evaluation → Streamlit). Team strength is fit on ~11.9k real international results
 (2014→present, martj42 CC0 dataset, no API key needed) and predictions cover the real
-World Cup 2026 schedule. Docs:
+World Cup 2026 schedule. The group stage is complete; the live forecast slate has
+advanced to the **round of 32** (16 fixtures). Docs:
 - [Data sources](docs/data_sources.md) · [Schema](docs/database_schema.md) ·
   [Modeling](docs/modeling.md) · [Evaluation](docs/evaluation.md) ·
   [Dashboard](docs/dashboard.md) · [Runbooks](docs/runbooks.md) · [Roadmap](docs/roadmap.md)
@@ -30,7 +31,20 @@ schedule** (`data/reference/wc2026_fixtures.csv`, derived from the cached footba
 pull by `scripts.etl.build_wc_fixtures`); an earlier synthetic slate randomly paired the
 strongest synthetic teams and produced impossible matchups like "Qatar vs Brazil".
 `make_sample_data` remains for deterministic offline tests but is no longer the training
-default.
+default. The model is refreshed through the **2026-06-27** results (full group stage); an
+out-of-fold study of how in-tournament games affect forecasts moved the time-decay
+half-life from 540 to **1095 days** and confirmed that up-weighting tournament games does
+not help (see `docs/methodology.md` §3c, `scripts/evaluation/recency_impact.py`,
+`recency_sweep.py`).
+
+**Round of 32 (2026-06-28).** With the group stage concluded, a fresh football-data pull
+resolved the 16 round-of-32 matchups; `build_wc_fixtures` regenerated
+`data/reference/wc2026_fixtures.csv` (group games now carry final scores, plus the R32
+fixtures). Only the **scheduled** R32 rows are loaded into the `world_cup_2026` forecast
+slate — finished WC games are never loaded there, since they already enter training via
+`pull_open_results` and loading them as `finished` under `world_cup_2026` would
+double-count each played game (see [methodology §8](docs/methodology.md)). The slate
+advances the same way as each subsequent knockout round resolves.
 
 Team-identity resolution is now alias-aware (`team_aliases`), with
 a merge step that collapses sources' duplicate spellings onto one canonical, history-
@@ -44,11 +58,15 @@ production runs with it off (see [methodology §8](docs/methodology.md)).
 python -m scripts.etl.init_db
 python -m scripts.etl.pull_open_results --since 2014    # real international results (CC0, no API key); loads into matches
 python -m scripts.etl.build_wc_fixtures                 # real WC fixtures from cached pull (checked-in CSV is the fallback)
-python -m scripts.etl.load_intl_results --path data/reference/wc2026_fixtures.csv
+# Load ONLY scheduled (unplayed) WC fixtures into the forecast slate. Finished WC games
+# already enter training via pull_open_results, so loading them here as `finished` under
+# world_cup_2026 would double-count each played match (see methodology §8).
+awk -F, 'NR==1 || $7==""' data/reference/wc2026_fixtures.csv > /tmp/wc_slate.csv
+python -m scripts.etl.load_intl_results --path /tmp/wc_slate.csv
 python -m scripts.etl.merge_duplicate_teams            # collapse split team identities
 python -m scripts.etl.populate_confederations          # fill teams.confederation
 python -m scripts.features.build_features
-python -m scripts.modeling.train_dixon_coles --half-life 540   # --min-matches 25 (default) drops CONIFA minnows; --confederation for the gated experiment
+python -m scripts.modeling.train_dixon_coles --half-life 1095   # --min-matches 25 (default) drops CONIFA minnows; --confederation for the gated experiment
 python -m scripts.modeling.predict --competition world_cup_2026
 python -m scripts.evaluation.backtest --folds 4
 streamlit run app/dashboard/app.py

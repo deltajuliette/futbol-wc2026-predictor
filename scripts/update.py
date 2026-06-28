@@ -27,7 +27,7 @@ log = get_logger("update")
 
 
 def run(wc_code: str = "WC", season: str | None = "2026",
-        store_as: str = "world_cup_2026", half_life: float = 540.0,
+        store_as: str = "world_cup_2026", half_life: float = 1095.0,
         skip_pull: bool = False, do_backtest: bool = False) -> None:
     t0 = time.monotonic()
     engine = init_db(get_engine())
@@ -74,7 +74,7 @@ def main() -> None:
     ap.add_argument("--wc-code", default="WC", help="football-data competition code")
     ap.add_argument("--season", default="2026")
     ap.add_argument("--store-as", default="world_cup_2026")
-    ap.add_argument("--half-life", type=float, default=540.0)
+    ap.add_argument("--half-life", type=float, default=1095.0)
     ap.add_argument("--skip-pull", action="store_true")
     ap.add_argument("--backtest", action="store_true")
     args = ap.parse_args()

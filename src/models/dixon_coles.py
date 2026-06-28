@@ -104,6 +104,8 @@ def fit_dixon_coles(
     conf_ridge: float = 5.0,
     conf_bound: float = 0.5,
     min_matches: int = 0,
+    tournament_weight: float = 1.0,
+    tournament_pattern: str = "World Cup",
 ) -> DCModel:
     """Fit the model on finished matches.
 
@@ -122,6 +124,12 @@ def fit_dixon_coles(
     This removes CONIFA/non-FIFA micro-nations (which play few games against each other
     and otherwise acquire wildly inflated ratings) from the public-results dataset. The
     default 0 keeps all teams.
+
+    ``tournament_weight`` up-weights games whose ``stage`` matches ``tournament_pattern``
+    (case-insensitive substring/regex) on top of the time decay, so a handful of recent
+    tournament results count for more than the same number of friendlies. The default
+    1.0 is an exact no-op. This is a recency/importance lever: combined with the
+    time-decay half-life it controls how strongly the live tournament moves strengths.
     """
     df = matches.dropna(subset=["home_goals", "away_goals"]).copy()
     if df.empty:
@@ -157,6 +165,15 @@ def fit_dixon_coles(
     ga = df["away_goals"].to_numpy()
     neutral = df["neutral"].fillna(0).astype(int).to_numpy()
     w = _decay_weights(df["kickoff_utc"], as_of, half_life_days)
+
+    # Optional tournament importance: multiply the time-decay weight of matches whose
+    # stage matches the pattern. No-op when tournament_weight == 1.0.
+    if tournament_weight != 1.0 and "stage" in df.columns:
+        is_tourn = df["stage"].fillna("").str.contains(tournament_pattern, case=False,
+                                                       regex=True).to_numpy()
+        w = w * np.where(is_tourn, tournament_weight, 1.0)
+        log.info("dixon_coles_tournament_weight", weight=tournament_weight,
+                 pattern=tournament_pattern, matched=int(is_tourn.sum()))
 
     # Optional confederation indices (-1 = unknown). Only inter-confederation matches
     # where BOTH sides are known carry the term.
